@@ -63,5 +63,9 @@ npm run dev
 
 Open `http://localhost:5173` in your browser. Open a new tab or use a different device on the same network to join the room and test the file transfer!
 
+## 👨‍💻 Developer
+
+Developed by **[Mahendar Kumar](https://github.com/mahendarkumar397)**.
+
 ## 📄 License
 This project is open-source and available under the MIT License.
