@@ -8,6 +8,9 @@ export default function TransferSession({
   handleFileDrop,
   handleFileChange,
   transferProgress,
+  transferSpeed,
+  transferETA,
+  isZipping,
   sendFile,
   receivingMeta
 }) {
@@ -44,12 +47,25 @@ export default function TransferSession({
               onDrop={handleFileDrop}
               onClick={() => document.getElementById('file-upload').click()}
             >
-              <input id="file-upload" type="file" className="hidden" onChange={(e) => handleFileChange(e.target.files[0])} />
-              <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mx-auto mb-4">
-                <FileUp className="w-8 h-8 text-brand-500" />
-              </div>
-              <p className="text-slate-800 font-semibold mb-1 text-lg">Click to select or drag & drop</p>
-              <p className="text-sm text-slate-500">Send any file size securely</p>
+              <input id="file-upload" type="file" multiple className="hidden" onChange={handleFileChange} />
+              
+              {isZipping ? (
+                <>
+                  <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
+                  </div>
+                  <h4 className="text-lg font-bold text-slate-800 mb-1">Compressing Files...</h4>
+                  <p className="text-sm text-slate-500">Preparing your files for transfer</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mx-auto mb-4">
+                    <FileUp className="w-8 h-8 text-brand-500" />
+                  </div>
+                  <h4 className="text-lg font-bold text-slate-800 mb-1">Select or drop files</h4>
+                  <p className="text-sm text-slate-500">Any size, directly transferred</p>
+                </>
+              )}
             </div>
           ) : (
             <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-5">
@@ -58,7 +74,7 @@ export default function TransferSession({
                   <FileIcon className="w-6 h-6 text-brand-600" />
                 </div>
                 <div className="flex-1 overflow-hidden">
-                  <p className="text-sm font-semibold text-slate-800 truncate">{selectedFile.name}</p>
+                  <p className="text-sm font-semibold text-slate-800 truncate">{selectedFile.name || "Multiple Files"}</p>
                   <p className="text-xs text-slate-500">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
                 </div>
                 {transferProgress === 100 && (
@@ -72,20 +88,25 @@ export default function TransferSession({
               </div>
               
               {transferProgress > 0 ? (
-                <div className="space-y-3">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className={transferProgress === 100 ? "text-green-600" : "text-brand-600"}>
-                      {transferProgress === 100 ? "Sent Successfully" : "Sending..."}
-                    </span>
-                    <span className="text-slate-700">{Math.round(transferProgress)}%</span>
+                <div className="space-y-2 mt-6">
+                  <div className="flex justify-between text-sm font-semibold text-slate-700">
+                    <span>{transferProgress === 100 ? "Completed" : "Transferring..."}</span>
+                    <span>{Math.round(transferProgress)}%</span>
                   </div>
-                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                  <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
                     <motion.div 
                       className={`h-full ${transferProgress === 100 ? 'bg-green-500' : 'bg-brand-500'}`}
                       initial={{ width: 0 }}
                       animate={{ width: `${transferProgress}%` }}
+                      transition={{ ease: "linear", duration: 0.2 }}
                     />
                   </div>
+                  {transferProgress < 100 && (
+                    <div className="flex justify-between text-xs text-slate-500 pt-1">
+                      <span>Speed: {transferSpeed ? transferSpeed.toFixed(2) : '0'} MB/s</span>
+                      <span>ETA: {transferETA ? Math.ceil(transferETA) : '0'}s</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button 
@@ -113,22 +134,28 @@ export default function TransferSession({
                   <p className="text-xs text-slate-500">{(receivingMeta.size / 1024 / 1024).toFixed(2)} MB</p>
                 </div>
               </div>
-              
-              <div className="space-y-3">
-                <div className="flex justify-between text-xs font-semibold">
-                  <span className={transferProgress === 100 ? "text-green-600" : "text-brand-600"}>
-                    {transferProgress === 100 ? "Completed & Downloaded" : "Receiving..."}
-                  </span>
-                  <span className="text-slate-700">{Math.round(transferProgress)}%</span>
+              {transferProgress > 0 ? (
+              <div className="space-y-2 mt-6">
+                <div className="flex justify-between text-sm font-semibold text-slate-700">
+                  <span>{transferProgress === 100 ? "Completed" : "Receiving..."}</span>
+                  <span>{Math.round(transferProgress)}%</span>
                 </div>
-                <div className="h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
                   <motion.div 
-                    className={`h-full ${transferProgress === 100 ? "bg-green-500" : "bg-brand-500"}`}
+                    className={`h-full ${transferProgress === 100 ? 'bg-green-500' : 'bg-brand-500'}`}
                     initial={{ width: 0 }}
                     animate={{ width: `${transferProgress}%` }}
+                    transition={{ ease: "linear", duration: 0.2 }}
                   />
                 </div>
+                {transferProgress < 100 && (
+                  <div className="flex justify-between text-xs text-slate-500 pt-1">
+                    <span>Speed: {transferSpeed ? transferSpeed.toFixed(2) : '0'} MB/s</span>
+                    <span>ETA: {transferETA ? Math.ceil(transferETA) : '0'}s</span>
+                  </div>
+                )}
               </div>
+            ) : null}
             </div>
           ) : (
             <div className="border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center bg-slate-50">

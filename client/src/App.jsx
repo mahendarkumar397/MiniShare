@@ -2,18 +2,30 @@ import { useState, useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { Send, Shield, Zap, Infinity as InfinityIcon } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
+import JSZip from 'jszip'
 
 import HomeView from './components/HomeView'
 import WaitingRoom from './components/WaitingRoom'
 import TransferSession from './components/TransferSession'
 
-const SOCKET_URL = 'http://localhost:3001'
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001'
 const socket = io(SOCKET_URL, { autoConnect: false })
 
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:openrelay.metered.ca:80' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ]
 }
 
@@ -30,6 +42,9 @@ function App() {
 
   const [selectedFile, setSelectedFile] = useState(null)
   const [transferProgress, setTransferProgress] = useState(0)
+  const [transferSpeed, setTransferSpeed] = useState(0)
+  const [transferETA, setTransferETA] = useState(0)
+  const [isZipping, setIsZipping] = useState(false)
   const [receivingMeta, setReceivingMeta] = useState(null)
 
   const peerConnection = useRef(null)
@@ -41,6 +56,8 @@ function App() {
   const receivedSize = useRef(0)
   const metaRef = useRef(null) 
   const lastProgressUpdate = useRef(0)
+  const speedUpdateInterval = useRef(Date.now())
+  const bytesSinceLastSpeedUpdate = useRef(0)
 
   // Auto-join from URL
   useEffect(() => {
@@ -196,16 +213,32 @@ function App() {
           receivedChunks.current = []
           receivedSize.current = 0
           setTransferProgress(0)
+          setTransferSpeed(0)
+          setTransferETA(0)
           lastProgressUpdate.current = Date.now()
+          speedUpdateInterval.current = Date.now()
+          bytesSinceLastSpeedUpdate.current = 0
         }
       } else {
         receivedChunks.current.push(event.data)
         receivedSize.current += event.data.byteLength
+        bytesSinceLastSpeedUpdate.current += event.data.byteLength
         
         if (metaRef.current) {
           const progress = (receivedSize.current / metaRef.current.size) * 100
           
           const now = Date.now()
+          if (now - speedUpdateInterval.current >= 1000) {
+            const timeDiff = (now - speedUpdateInterval.current) / 1000
+            const speedBytesPerSec = bytesSinceLastSpeedUpdate.current / timeDiff
+            setTransferSpeed(speedBytesPerSec / (1024 * 1024))
+            const remainingBytes = metaRef.current.size - receivedSize.current
+            setTransferETA(speedBytesPerSec > 0 ? remainingBytes / speedBytesPerSec : 0)
+            
+            speedUpdateInterval.current = now
+            bytesSinceLastSpeedUpdate.current = 0
+          }
+
           if (now - lastProgressUpdate.current > 50 || receivedSize.current === metaRef.current.size) {
             setTransferProgress(progress)
             lastProgressUpdate.current = now
@@ -240,6 +273,8 @@ function App() {
     
     const dc = dataChannel.current;
     lastProgressUpdate.current = Date.now();
+    speedUpdateInterval.current = Date.now();
+    bytesSinceLastSpeedUpdate.current = 0;
     
     const meta = {
       type: 'metadata',
@@ -282,8 +317,20 @@ function App() {
       }
       
       offset += blockBuffer.byteLength;
+      bytesSinceLastSpeedUpdate.current += blockBuffer.byteLength;
       
       const now = Date.now();
+      if (now - speedUpdateInterval.current >= 1000) {
+        const timeDiff = (now - speedUpdateInterval.current) / 1000;
+        const speedBytesPerSec = bytesSinceLastSpeedUpdate.current / timeDiff;
+        setTransferSpeed(speedBytesPerSec / (1024 * 1024));
+        const remainingBytes = selectedFile.size - offset;
+        setTransferETA(speedBytesPerSec > 0 ? remainingBytes / speedBytesPerSec : 0);
+        
+        speedUpdateInterval.current = now;
+        bytesSinceLastSpeedUpdate.current = 0;
+      }
+
       if (now - lastProgressUpdate.current > 50) {
         setTransferProgress((offset / selectedFile.size) * 100);
         lastProgressUpdate.current = now;
@@ -302,15 +349,35 @@ function App() {
     }
   }
 
-  const handleFileChange = (file) => {
-    setSelectedFile(file)
-    setTransferProgress(0) 
+  const processFiles = async (fileList) => {
+    if (!fileList || fileList.length === 0) return;
+    
+    if (fileList.length === 1) {
+      setSelectedFile(fileList[0])
+    } else {
+      setIsZipping(true)
+      const zip = new JSZip()
+      Array.from(fileList).forEach(f => {
+        zip.file(f.name, f)
+      })
+      const blob = await zip.generateAsync({ type: 'blob' })
+      const zipFile = new File([blob], 'MiniShare_Transfer.zip', { type: 'application/zip' })
+      setSelectedFile(zipFile)
+      setIsZipping(false)
+    }
+    setTransferProgress(0)
+    setTransferSpeed(0)
+    setTransferETA(0)
+  }
+
+  const handleFileChange = (e) => {
+    processFiles(e.target.files)
   }
 
   const handleFileDrop = (e) => {
     e.preventDefault()
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileChange(e.dataTransfer.files[0])
+    if (e.dataTransfer.files) {
+      processFiles(e.dataTransfer.files)
     }
   }
 
@@ -420,6 +487,9 @@ function App() {
                   handleFileDrop={handleFileDrop}
                   handleFileChange={handleFileChange}
                   transferProgress={transferProgress}
+                  transferSpeed={transferSpeed}
+                  transferETA={transferETA}
+                  isZipping={isZipping}
                   sendFile={sendFile}
                   receivingMeta={receivingMeta}
                 />
