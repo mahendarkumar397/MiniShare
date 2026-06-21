@@ -797,6 +797,10 @@ function App() {
                 <h3 className="text-lg font-semibold text-slate-800 mb-2">Is it secure?</h3>
                 <p className="text-slate-600">Yes. The WebRTC connection is End-to-End Encrypted by default using Datagram Transport Layer Security (DTLS). Nobody, not even us, can intercept or read the files you send.</p>
               </div>
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 hover:shadow-md transition-shadow">
+                <h3 className="text-lg font-semibold text-slate-800 mb-2">Does it work on all devices?</h3>
+                <p className="text-slate-600">Yes! MiniShare runs entirely in your web browser. It is fully compatible with Windows, Mac, Linux, Android, and iOS (iPhone/iPad). As long as you have a modern web browser, you can share files seamlessly across any combination of devices.</p>
+              </div>
             </div>
           </div>
         </div>
