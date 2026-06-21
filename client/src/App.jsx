@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
-import { Send, Shield, Zap, Infinity as InfinityIcon } from 'lucide-react'
+import { Send, Shield, Zap, Infinity as InfinityIcon, Info, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import JSZip from 'jszip'
 
@@ -37,6 +37,7 @@ function App() {
   const [roomCode, setRoomCode] = useState('')
   const [joinCodeInput, setJoinCodeInput] = useState('')
   const [error, setError] = useState('')
+  const [showRules, setShowRules] = useState(false)
   
   // connectionStatus could be string or just count of connected peers. Let's keep it as string.
   const [connectionStatus, setConnectionStatus] = useState('disconnected') 
@@ -632,6 +633,7 @@ function App() {
                   joinCodeInput={joinCodeInput}
                   setJoinCodeInput={setJoinCodeInput}
                   error={error}
+                  setShowRules={setShowRules}
                 />
               )}
 
@@ -667,41 +669,131 @@ function App() {
       {/* Expanded Content Sections (Visible only on idle) */}
       {appState === 'idle' && (
         <div className="w-full bg-white z-10">
+          
+          {/* Detailed How to Use Section */}
           <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 py-24">
-            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 text-center mb-16 tracking-tight">How it works</h2>
+            <div className="text-center mb-20">
+              <h2 className="text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight mb-4">How to Use MiniShare</h2>
+              <p className="text-xl text-slate-500 max-w-2xl mx-auto">A seamless peer-to-peer file transfer experience. No accounts, no limits, no central servers.</p>
+            </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-              <div className="text-center space-y-4">
-                <div className="w-16 h-16 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center mx-auto text-2xl font-bold border border-brand-100 shadow-sm">1</div>
-                <h3 className="text-xl font-semibold text-slate-800">Select Files</h3>
-                <p className="text-slate-600">Choose any files you want to share. A secure room and a unique QR code are generated instantly.</p>
+            <div className="space-y-24">
+              {/* Step 1 */}
+              <div className="flex flex-col md:flex-row items-center gap-12 lg:gap-24 group">
+                <div className="flex-1 space-y-6">
+                  <div className="w-16 h-16 bg-brand-100 text-brand-600 rounded-2xl flex items-center justify-center text-2xl font-bold shadow-inner border border-brand-200">1</div>
+                  <h3 className="text-3xl font-bold text-slate-800 tracking-tight">Create a Room</h3>
+                  <p className="text-lg text-slate-600 leading-relaxed">
+                    Click the <span className="font-semibold text-brand-600 bg-brand-50 px-2 py-1 rounded-md">Select files to share</span> button at the top of the page. Choose one or multiple files of any size from your device. MiniShare will instantly generate a unique 6-digit room code and a QR code for your secure transfer session.
+                  </p>
+                </div>
+                <div className="flex-1 w-full relative">
+                  <div className="absolute inset-0 bg-brand-100 rounded-[2rem] transform rotate-3 scale-105 transition-transform duration-500 group-hover:rotate-6"></div>
+                  <div className="relative bg-white border border-slate-200 p-8 rounded-[2rem] shadow-xl text-center space-y-4">
+                    <div className="text-6xl font-mono font-bold text-brand-600 tracking-[0.2em] py-8">A4B9F2</div>
+                    <div className="w-32 h-32 bg-slate-100 rounded-xl mx-auto border-4 border-white shadow-md flex items-center justify-center">
+                      <div className="grid grid-cols-3 gap-1 w-16 h-16 opacity-30"><div className="bg-black"/><div className="bg-white"/><div className="bg-black"/><div className="bg-black"/><div className="bg-black"/><div className="bg-white"/><div className="bg-white"/><div className="bg-black"/><div className="bg-black"/></div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="text-center space-y-4">
-                <div className="w-16 h-16 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center mx-auto text-2xl font-bold border border-brand-100 shadow-sm">2</div>
-                <h3 className="text-xl font-semibold text-slate-800">Share Link</h3>
-                <p className="text-slate-600">Send the generated link or show the QR code to the receiver. They just need to open it in their browser.</p>
+
+              {/* Step 2 */}
+              <div className="flex flex-col md:flex-row-reverse items-center gap-12 lg:gap-24 group">
+                <div className="flex-1 space-y-6">
+                  <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center text-2xl font-bold shadow-inner border border-purple-200">2</div>
+                  <h3 className="text-3xl font-bold text-slate-800 tracking-tight">Receiver Joins</h3>
+                  <p className="text-lg text-slate-600 leading-relaxed">
+                    The receiver opens MiniShare on their device. They can either type the 6-digit room code into the <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded-md">Enter Room Code</span> box and click Join, or simply scan your QR code with their mobile camera to connect instantly.
+                  </p>
+                </div>
+                <div className="flex-1 w-full relative">
+                  <div className="absolute inset-0 bg-purple-100 rounded-[2rem] transform -rotate-3 scale-105 transition-transform duration-500 group-hover:-rotate-6"></div>
+                  <div className="relative bg-white border border-slate-200 p-8 rounded-[2rem] shadow-xl text-center space-y-6">
+                    <input disabled value="A4B9F2" className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-4 text-center tracking-[0.2em] text-lg font-medium text-slate-800" />
+                    <button disabled className="w-full bg-slate-200 text-slate-500 font-medium py-4 rounded-2xl flex items-center justify-center gap-2">
+                       Join Room
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="text-center space-y-4">
-                <div className="w-16 h-16 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center mx-auto text-2xl font-bold border border-brand-100 shadow-sm">3</div>
-                <h3 className="text-xl font-semibold text-slate-800">Transfer Direct</h3>
-                <p className="text-slate-600">The devices connect peer-to-peer. Keep your tab open until the fast, secure transfer is complete.</p>
+
+              {/* Step 3 */}
+              <div className="flex flex-col md:flex-row items-center gap-12 lg:gap-24 group">
+                <div className="flex-1 space-y-6">
+                  <div className="w-16 h-16 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center text-2xl font-bold shadow-inner border border-green-200">3</div>
+                  <h3 className="text-3xl font-bold text-slate-800 tracking-tight">Direct Transfer</h3>
+                  <p className="text-lg text-slate-600 leading-relaxed">
+                    Once connected, a secure WebRTC tunnel is established directly between the two devices. The transfer starts automatically! You'll see real-time speed and progress bars. <br/><br/>
+                    <strong className="text-slate-800 font-semibold bg-amber-100 px-2 py-1 rounded-md">Important:</strong> Keep your browser tab open until the transfer reaches 100%. The receiver will automatically download the file once completed.
+                  </p>
+                </div>
+                <div className="flex-1 w-full relative">
+                  <div className="absolute inset-0 bg-green-100 rounded-[2rem] transform rotate-3 scale-105 transition-transform duration-500 group-hover:rotate-6"></div>
+                  <div className="relative bg-white border border-slate-200 p-8 rounded-[2rem] shadow-xl space-y-4">
+                    <div className="flex justify-between items-center text-sm font-semibold text-slate-700">
+                      <span>Sending to 1 peer...</span>
+                      <span>68%</span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                      <div className="h-full bg-green-500 w-[68%]"></div>
+                    </div>
+                    <div className="flex justify-between text-xs text-slate-500 mt-2">
+                      <span>Speed: 12.5 MB/s</span>
+                      <span>ETA: 4s</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="w-full max-w-4xl mx-auto px-4 sm:px-8 py-24 border-t border-slate-100">
+          {/* Troubleshooting Section */}
+          <div className="w-full bg-slate-50 border-y border-slate-200">
+            <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 py-20">
+              <h2 className="text-3xl font-bold text-slate-900 text-center mb-12 tracking-tight">Troubleshooting & Tips</h2>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-4 text-2xl font-bold">?</div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-2">Button doing nothing?</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">If clicking 'Select files' or 'Join' does nothing, the connection server might be waking up. Please wait about 30-45 seconds, refresh the page, and try again.</p>
+                </div>
+                
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4 text-2xl font-bold">📱</div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-2">Different Networks?</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">MiniShare works seamlessly across different networks (like Wi-Fi to 5G). If a strict firewall blocks the direct connection, we automatically route your transfer securely to ensure it succeeds.</p>
+                </div>
+
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center mb-4 text-2xl font-bold">⏸️</div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-2">Keep the app open</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">For the fastest and most stable transfer, keep the browser tab active on both devices. If the transfer pauses because a device goes to sleep, just wake it up and click Resume.</p>
+                </div>
+
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 text-2xl font-bold">🔒</div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-2">Using an iPhone?</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">Apple's iOS requires a secure connection to share files. Always make sure you are using the secure version of the site (the URL in your browser should begin with https://).</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full max-w-4xl mx-auto px-4 sm:px-8 py-24">
             <h2 className="text-3xl font-bold text-slate-900 text-center mb-12 tracking-tight">Frequently Asked Questions</h2>
             
             <div className="space-y-6">
-              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200">
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 hover:shadow-md transition-shadow">
                 <h3 className="text-lg font-semibold text-slate-800 mb-2">Are my files stored on your servers?</h3>
                 <p className="text-slate-600">Never. MiniShare uses WebRTC to establish a direct connection between you and the receiver. Your data goes straight from your device to theirs without stopping anywhere in between.</p>
               </div>
-              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200">
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 hover:shadow-md transition-shadow">
                 <h3 className="text-lg font-semibold text-slate-800 mb-2">Is there really no file size limit?</h3>
-                <p className="text-slate-600">Yes! Because we don't pay for server storage or bandwidth to hold your files, we don't have to impose limits. You can send files of any size, limited only by your own internet connection and device storage.</p>
+                <p className="text-slate-600">Technically, yes! Because files transfer directly between devices, there are no artificial limits. However, for mobile devices, we recommend keeping transfers under <strong className="text-slate-800 font-medium">4GB</strong> to prevent your mobile browser from falling asleep and dropping the connection. For PC to PC, it is virtually unlimited!</p>
               </div>
-              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200">
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 hover:shadow-md transition-shadow">
                 <h3 className="text-lg font-semibold text-slate-800 mb-2">Is it secure?</h3>
                 <p className="text-slate-600">Yes. The WebRTC connection is End-to-End Encrypted by default using Datagram Transport Layer Security (DTLS). Nobody, not even us, can intercept or read the files you send.</p>
               </div>
@@ -714,6 +806,70 @@ function App() {
       <div className="w-full bg-slate-900 text-slate-400 text-sm py-8 text-center z-10">
         &copy; {new Date().getFullYear()} MiniShare. Built with React and WebRTC.
       </div>
+
+      {/* Rules Modal */}
+      <AnimatePresence>
+        {showRules && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+              onClick={() => setShowRules(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-white rounded-[2rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 sm:p-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                    <Info className="w-6 h-6 text-brand-600" /> 
+                    Usage Guidelines
+                  </h3>
+                  <button 
+                    onClick={() => setShowRules(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                
+                <div className="space-y-4 text-slate-600 leading-relaxed">
+                  <div className="flex gap-3">
+                    <span className="font-bold text-brand-600">1.</span>
+                    <p><strong>Keep your tab open:</strong> Transfers happen directly between browsers. If either the sender or receiver closes the tab, the transfer will fail.</p>
+                  </div>
+                  <div className="flex gap-3">
+                    <span className="font-bold text-purple-600">2.</span>
+                    <p><strong>Device sleeping:</strong> Prevent your phone or computer from going to sleep while transferring large files. This can pause or break the connection.</p>
+                  </div>
+                  <div className="flex gap-3">
+                    <span className="font-bold text-blue-600">3.</span>
+                    <p><strong>Size limits:</strong> While PC-to-PC transfers are virtually unlimited, we recommend keeping mobile transfers under 4GB to prevent browser crashes.</p>
+                  </div>
+                  <div className="flex gap-3">
+                    <span className="font-bold text-green-600">4.</span>
+                    <p><strong>Security:</strong> All files are End-to-End Encrypted. We do not store your files on any server, ensuring total privacy.</p>
+                  </div>
+                </div>
+                
+                <div className="mt-8">
+                  <button 
+                    onClick={() => setShowRules(false)}
+                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-3 rounded-xl transition-colors"
+                  >
+                    Got it, thanks!
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

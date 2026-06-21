@@ -1,12 +1,13 @@
 import { motion } from 'framer-motion'
-import { Send, Download } from 'lucide-react'
+import { Send, Download, Info } from 'lucide-react'
 
 export default function HomeView({ 
   handleCreateRoom, 
   handleJoinRoom, 
   joinCodeInput, 
   setJoinCodeInput, 
-  error 
+  error,
+  setShowRules
 }) {
   return (
     <motion.div 
@@ -19,6 +20,12 @@ export default function HomeView({
       <div className="text-center space-y-2">
         <h2 className="text-2xl font-semibold text-slate-800">Share files securely</h2>
         <p className="text-slate-500">Peer to peer, no file size limits.</p>
+        <button 
+          onClick={() => setShowRules(true)}
+          className="inline-flex items-center gap-1.5 text-sm text-brand-600 hover:text-brand-700 font-medium transition-colors mt-2 bg-brand-50 hover:bg-brand-100 px-3 py-1 rounded-full"
+        >
+          <Info className="w-4 h-4" /> Usage Guidelines
+        </button>
       </div>
 
       <div className="space-y-6">
