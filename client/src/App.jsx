@@ -46,6 +46,9 @@ function App() {
   const [transferETA, setTransferETA] = useState(0)
   const [isZipping, setIsZipping] = useState(false)
   const [receivingMeta, setReceivingMeta] = useState(null)
+  
+  const [messages, setMessages] = useState([])
+  const [isPaused, setIsPaused] = useState(false)
 
   const peerConnection = useRef(null)
   const dataChannel = useRef(null)
@@ -58,6 +61,7 @@ function App() {
   const lastProgressUpdate = useRef(0)
   const speedUpdateInterval = useRef(Date.now())
   const bytesSinceLastSpeedUpdate = useRef(0)
+  const isPausedRef = useRef(false)
 
   // Auto-join from URL
   useEffect(() => {
@@ -218,6 +222,16 @@ function App() {
           lastProgressUpdate.current = Date.now()
           speedUpdateInterval.current = Date.now()
           bytesSinceLastSpeedUpdate.current = 0
+        } else if (meta.type === 'chat') {
+          setMessages(prev => [...prev, { ...meta, sender: 'peer' }])
+        } else if (meta.type === 'control') {
+          if (meta.action === 'pause') {
+            setIsPaused(true)
+            isPausedRef.current = true
+          } else if (meta.action === 'resume') {
+            setIsPaused(false)
+            isPausedRef.current = false
+          }
         }
       } else {
         receivedChunks.current.push(event.data)
@@ -297,6 +311,10 @@ function App() {
     }
 
     while (offset < selectedFile.size) {
+      while (isPausedRef.current) {
+        await new Promise(r => setTimeout(r, 200))
+      }
+      
       const blockBuffer = await readBlock(offset);
       let blockOffset = 0;
 
@@ -374,10 +392,92 @@ function App() {
     processFiles(e.target.files)
   }
 
-  const handleFileDrop = (e) => {
+  const getAllFileEntries = async (dataTransferItemList) => {
+    let fileEntries = [];
+    let queue = [];
+    for (let i = 0; i < dataTransferItemList.length; i++) {
+      const item = dataTransferItemList[i];
+      if (item.webkitGetAsEntry) {
+        const entry = item.webkitGetAsEntry();
+        if (entry) queue.push(entry);
+      }
+    }
+    
+    const readDirectory = (dirEntry) => {
+      return new Promise((resolve) => {
+        const reader = dirEntry.createReader();
+        reader.readEntries((entries) => resolve(entries));
+      });
+    };
+
+    while (queue.length > 0) {
+      let entry = queue.shift();
+      if (entry.isFile) {
+        fileEntries.push(entry);
+      } else if (entry.isDirectory) {
+        let entries = await readDirectory(entry);
+        queue.push(...entries);
+      }
+    }
+    return fileEntries;
+  }
+
+  const handleFileDrop = async (e) => {
     e.preventDefault()
-    if (e.dataTransfer.files) {
+    if (e.dataTransfer.items) {
+      setIsZipping(true)
+      const fileEntries = await getAllFileEntries(e.dataTransfer.items)
+      if (fileEntries.length === 0) {
+        setIsZipping(false)
+        return
+      }
+      if (fileEntries.length === 1 && fileEntries[0].fullPath.indexOf('/') === fileEntries[0].fullPath.lastIndexOf('/')) {
+        fileEntries[0].file((f) => {
+          setSelectedFile(f)
+          setTransferProgress(0)
+          setTransferSpeed(0)
+          setTransferETA(0)
+          setIsZipping(false)
+        })
+      } else {
+        const zip = new JSZip()
+        const filePromises = fileEntries.map(entry => {
+          return new Promise(resolve => {
+            entry.file(f => {
+              const path = entry.fullPath.startsWith('/') ? entry.fullPath.slice(1) : entry.fullPath
+              zip.file(path, f)
+              resolve()
+            })
+          })
+        })
+        await Promise.all(filePromises)
+        const blob = await zip.generateAsync({ type: 'blob' })
+        const zipFile = new File([blob], 'MiniShare_Folder.zip', { type: 'application/zip' })
+        setSelectedFile(zipFile)
+        setTransferProgress(0)
+        setTransferSpeed(0)
+        setTransferETA(0)
+        setIsZipping(false)
+      }
+    } else if (e.dataTransfer.files) {
       processFiles(e.dataTransfer.files)
+    }
+  }
+
+  const sendMessage = (text) => {
+    if (dataChannel.current && dataChannel.current.readyState === 'open') {
+      const msg = { type: 'chat', text, sender: 'me', timestamp: Date.now() }
+      dataChannel.current.send(JSON.stringify(msg))
+      setMessages(prev => [...prev, msg])
+    }
+  }
+
+  const togglePause = () => {
+    const newState = !isPaused;
+    setIsPaused(newState);
+    isPausedRef.current = newState;
+    if (dataChannel.current && dataChannel.current.readyState === 'open') {
+      dataChannel.current.send(JSON.stringify({ type: 'control', action: newState ? 'pause' : 'resume' }))
     }
   }
 
@@ -492,6 +592,10 @@ function App() {
                   isZipping={isZipping}
                   sendFile={sendFile}
                   receivingMeta={receivingMeta}
+                  messages={messages}
+                  sendMessage={sendMessage}
+                  isPaused={isPaused}
+                  togglePause={togglePause}
                 />
               )}
             </AnimatePresence>

@@ -12,7 +12,11 @@ export default function TransferSession({
   transferETA,
   isZipping,
   sendFile,
-  receivingMeta
+  receivingMeta,
+  messages,
+  sendMessage,
+  isPaused,
+  togglePause
 }) {
   return (
     <motion.div 
@@ -89,8 +93,15 @@ export default function TransferSession({
               
               {transferProgress > 0 ? (
                 <div className="space-y-2 mt-6">
-                  <div className="flex justify-between text-sm font-semibold text-slate-700">
-                    <span>{transferProgress === 100 ? "Completed" : "Transferring..."}</span>
+                  <div className="flex justify-between items-center text-sm font-semibold text-slate-700">
+                    <div className="flex items-center gap-2">
+                      <span>{transferProgress === 100 ? "Completed" : "Transferring..."}</span>
+                      {transferProgress > 0 && transferProgress < 100 && (
+                        <button onClick={togglePause} className="px-2 py-0.5 text-xs bg-slate-200 hover:bg-slate-300 rounded text-slate-700">
+                          {isPaused ? 'Resume' : 'Pause'}
+                        </button>
+                      )}
+                    </div>
                     <span>{Math.round(transferProgress)}%</span>
                   </div>
                   <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
@@ -136,8 +147,15 @@ export default function TransferSession({
               </div>
               {transferProgress > 0 ? (
               <div className="space-y-2 mt-6">
-                <div className="flex justify-between text-sm font-semibold text-slate-700">
-                  <span>{transferProgress === 100 ? "Completed" : "Receiving..."}</span>
+                <div className="flex justify-between items-center text-sm font-semibold text-slate-700">
+                  <div className="flex items-center gap-2">
+                    <span>{transferProgress === 100 ? "Completed" : "Receiving..."}</span>
+                    {transferProgress > 0 && transferProgress < 100 && (
+                      <button onClick={togglePause} className="px-2 py-0.5 text-xs bg-slate-200 hover:bg-slate-300 rounded text-slate-700">
+                        {isPaused ? 'Resume' : 'Pause'}
+                      </button>
+                    )}
+                  </div>
                   <span>{Math.round(transferProgress)}%</span>
                 </div>
                 <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
@@ -166,6 +184,53 @@ export default function TransferSession({
               <p className="text-sm text-slate-500 mt-1">They are selecting a file to send</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Chat UI */}
+      {connectionStatus === 'connected' && (
+        <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-4 flex flex-col h-64">
+          <h4 className="text-sm font-semibold text-slate-800 mb-2">In-Room Chat</h4>
+          <div className="flex-1 overflow-y-auto mb-3 space-y-2 pr-2">
+            {messages.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center mt-10">No messages yet. Say hello!</p>
+            ) : (
+              messages.map((m, i) => (
+                <div key={i} className={`flex ${m.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`px-3 py-2 rounded-lg text-sm max-w-[80%] break-words ${m.sender === 'me' ? 'bg-brand-500 text-white rounded-br-none' : 'bg-slate-100 text-slate-800 rounded-bl-none'}`}>
+                    {m.text}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input 
+              type="text" 
+              id="chat-input"
+              autoComplete="off"
+              className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" 
+              placeholder="Type a message..."
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && e.target.value.trim()) {
+                  sendMessage(e.target.value.trim())
+                  e.target.value = ''
+                }
+              }}
+            />
+            <button 
+              onClick={() => {
+                const input = document.getElementById('chat-input')
+                if (input.value.trim()) {
+                  sendMessage(input.value.trim())
+                  input.value = ''
+                }
+              }}
+              className="bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 transition-colors font-medium text-sm"
+            >
+              Send
+            </button>
+          </div>
         </div>
       )}
     </motion.div>
