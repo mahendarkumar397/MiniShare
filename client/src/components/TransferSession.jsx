@@ -1,9 +1,9 @@
 import { motion } from 'framer-motion'
-import { FileUp, File as FileIcon, Download, CheckCircle, Loader2 } from 'lucide-react'
+import { FileUp, File as FileIcon, Download, CheckCircle, Loader2, Users } from 'lucide-react'
 
 export default function TransferSession({
   connectionStatus,
-  isSender,
+  peerCount,
   selectedFile,
   handleFileDrop,
   handleFileChange,
@@ -16,7 +16,8 @@ export default function TransferSession({
   messages,
   sendMessage,
   isPaused,
-  togglePause
+  togglePause,
+  resetFile
 }) {
   return (
     <motion.div 
@@ -32,70 +33,48 @@ export default function TransferSession({
         ) : (
           <Loader2 className="w-6 h-6 text-brand-500 animate-spin shrink-0" />
         )}
-        <div>
+        <div className="flex-1">
           <h3 className="text-sm font-semibold text-slate-800">
-            {connectionStatus === 'connected' ? 'Secure P2P Connection' : 'Connecting to Peer...'}
+            {connectionStatus === 'connected' ? 'Secure P2P Mesh Network' : 'Connecting to Peers...'}
           </h3>
           <p className="text-xs text-slate-500">
             {connectionStatus === 'connected' ? 'End-to-End Encrypted' : 'Negotiating WebRTC details'}
           </p>
         </div>
+        {connectionStatus === 'connected' && (
+          <div className="flex items-center gap-1.5 px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">
+            <Users className="w-3.5 h-3.5" />
+            {peerCount} {peerCount === 1 ? 'Peer' : 'Peers'}
+          </div>
+        )}
       </div>
 
-      {connectionStatus === 'connected' && isSender && (
+      {connectionStatus === 'connected' && (
         <div className="space-y-4">
-          {!selectedFile ? (
-            <div 
-              className="border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={handleFileDrop}
-              onClick={() => document.getElementById('file-upload').click()}
-            >
-              <input id="file-upload" type="file" multiple className="hidden" onChange={handleFileChange} />
-              
-              {isZipping ? (
-                <>
-                  <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
-                  </div>
-                  <h4 className="text-lg font-bold text-slate-800 mb-1">Compressing Files...</h4>
-                  <p className="text-sm text-slate-500">Preparing your files for transfer</p>
-                </>
-              ) : (
-                <>
-                  <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mx-auto mb-4">
-                    <FileUp className="w-8 h-8 text-brand-500" />
-                  </div>
-                  <h4 className="text-lg font-bold text-slate-800 mb-1">Select or drop files</h4>
-                  <p className="text-sm text-slate-500">Any size, directly transferred</p>
-                </>
-              )}
-            </div>
-          ) : (
+          {receivingMeta ? (
             <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-5">
               <div className="flex items-center gap-4 mb-5">
-                <div className="p-3 bg-brand-50 rounded-xl border border-brand-100">
-                  <FileIcon className="w-6 h-6 text-brand-600" />
+                <div className="p-3 bg-green-50 rounded-xl border border-green-100">
+                  <Download className="w-6 h-6 text-green-600" />
                 </div>
                 <div className="flex-1 overflow-hidden">
-                  <p className="text-sm font-semibold text-slate-800 truncate">{selectedFile.name || "Multiple Files"}</p>
-                  <p className="text-xs text-slate-500">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                  <p className="text-sm font-semibold text-slate-800 truncate">{receivingMeta.name}</p>
+                  <p className="text-xs text-slate-500">{(receivingMeta.size / 1024 / 1024).toFixed(2)} MB</p>
                 </div>
                 {transferProgress === 100 && (
                   <button 
-                    onClick={() => handleFileChange(null)}
+                    onClick={resetFile}
                     className="text-xs text-brand-600 hover:text-brand-700 font-medium px-3 py-1.5 bg-brand-50 rounded-lg"
                   >
-                    Send Another
+                    Done
                   </button>
                 )}
               </div>
-              
-              {transferProgress > 0 ? (
+              {transferProgress > 0 && (
                 <div className="space-y-2 mt-6">
                   <div className="flex justify-between items-center text-sm font-semibold text-slate-700">
                     <div className="flex items-center gap-2">
-                      <span>{transferProgress === 100 ? "Completed" : "Transferring..."}</span>
+                      <span>{transferProgress === 100 ? "Completed" : "Receiving..."}</span>
                       {transferProgress > 0 && transferProgress < 100 && (
                         <button onClick={togglePause} className="px-2 py-0.5 text-xs bg-slate-200 hover:bg-slate-300 rounded text-slate-700">
                           {isPaused ? 'Resume' : 'Pause'}
@@ -119,69 +98,92 @@ export default function TransferSession({
                     </div>
                   )}
                 </div>
+              )}
+            </div>
+          ) : selectedFile ? (
+            <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-5">
+              <div className="flex items-center gap-4 mb-5">
+                <div className="p-3 bg-brand-50 rounded-xl border border-brand-100">
+                  <FileIcon className="w-6 h-6 text-brand-600" />
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{selectedFile.name || "Multiple Files"}</p>
+                  <p className="text-xs text-slate-500">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                </div>
+                {transferProgress === 100 && (
+                  <button 
+                    onClick={resetFile}
+                    className="text-xs text-brand-600 hover:text-brand-700 font-medium px-3 py-1.5 bg-brand-50 rounded-lg"
+                  >
+                    Send Another
+                  </button>
+                )}
+              </div>
+              
+              {transferProgress > 0 ? (
+                <div className="space-y-2 mt-6">
+                  <div className="flex justify-between items-center text-sm font-semibold text-slate-700">
+                    <div className="flex items-center gap-2">
+                      <span>{transferProgress === 100 ? "Completed" : `Sending to ${peerCount} peers...`}</span>
+                      {transferProgress > 0 && transferProgress < 100 && (
+                        <button onClick={togglePause} className="px-2 py-0.5 text-xs bg-slate-200 hover:bg-slate-300 rounded text-slate-700">
+                          {isPaused ? 'Resume' : 'Pause'}
+                        </button>
+                      )}
+                    </div>
+                    <span>{Math.round(transferProgress)}%</span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                    <motion.div 
+                      className={`h-full ${transferProgress === 100 ? 'bg-green-500' : 'bg-brand-500'}`}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${transferProgress}%` }}
+                      transition={{ ease: "linear", duration: 0.2 }}
+                    />
+                  </div>
+                  {transferProgress < 100 && (
+                    <div className="flex justify-between text-xs text-slate-500 pt-1">
+                      <span>Overall Speed: {transferSpeed ? transferSpeed.toFixed(2) : '0'} MB/s</span>
+                      <span>Max ETA: {transferETA ? Math.ceil(transferETA) : '0'}s</span>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <button 
                   onClick={sendFile}
-                  className="w-full bg-brand-600 hover:bg-brand-700 text-white font-medium py-3 rounded-xl transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5"
+                  disabled={peerCount === 0}
+                  className={`w-full font-medium py-3 rounded-xl transition-all shadow-md ${peerCount > 0 ? 'bg-brand-600 hover:bg-brand-700 text-white hover:shadow-lg hover:-translate-y-0.5' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}
                 >
-                  Start Transfer
+                  {peerCount > 0 ? `Start Transfer to ${peerCount} peers` : 'Waiting for peers...'}
                 </button>
               )}
             </div>
-          )}
-        </div>
-      )}
-
-      {connectionStatus === 'connected' && !isSender && (
-        <div className="space-y-4">
-          {receivingMeta ? (
-            <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-5">
-              <div className="flex items-center gap-4 mb-5">
-                <div className="p-3 bg-green-50 rounded-xl border border-green-100">
-                  <Download className="w-6 h-6 text-green-600" />
-                </div>
-                <div className="flex-1 overflow-hidden">
-                  <p className="text-sm font-semibold text-slate-800 truncate">{receivingMeta.name}</p>
-                  <p className="text-xs text-slate-500">{(receivingMeta.size / 1024 / 1024).toFixed(2)} MB</p>
-                </div>
-              </div>
-              {transferProgress > 0 ? (
-              <div className="space-y-2 mt-6">
-                <div className="flex justify-between items-center text-sm font-semibold text-slate-700">
-                  <div className="flex items-center gap-2">
-                    <span>{transferProgress === 100 ? "Completed" : "Receiving..."}</span>
-                    {transferProgress > 0 && transferProgress < 100 && (
-                      <button onClick={togglePause} className="px-2 py-0.5 text-xs bg-slate-200 hover:bg-slate-300 rounded text-slate-700">
-                        {isPaused ? 'Resume' : 'Pause'}
-                      </button>
-                    )}
-                  </div>
-                  <span>{Math.round(transferProgress)}%</span>
-                </div>
-                <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
-                  <motion.div 
-                    className={`h-full ${transferProgress === 100 ? 'bg-green-500' : 'bg-brand-500'}`}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${transferProgress}%` }}
-                    transition={{ ease: "linear", duration: 0.2 }}
-                  />
-                </div>
-                {transferProgress < 100 && (
-                  <div className="flex justify-between text-xs text-slate-500 pt-1">
-                    <span>Speed: {transferSpeed ? transferSpeed.toFixed(2) : '0'} MB/s</span>
-                    <span>ETA: {transferETA ? Math.ceil(transferETA) : '0'}s</span>
-                  </div>
-                )}
-              </div>
-            ) : null}
-            </div>
           ) : (
-            <div className="border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center bg-slate-50">
-              <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-100">
-                <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
-              </div>
-              <p className="text-slate-800 font-semibold text-lg">Waiting for sender...</p>
-              <p className="text-sm text-slate-500 mt-1">They are selecting a file to send</p>
+            <div 
+              className="border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleFileDrop}
+              onClick={() => document.getElementById('file-upload').click()}
+            >
+              <input id="file-upload" type="file" multiple className="hidden" onChange={handleFileChange} />
+              
+              {isZipping ? (
+                <>
+                  <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
+                  </div>
+                  <h4 className="text-lg font-bold text-slate-800 mb-1">Compressing Files...</h4>
+                  <p className="text-sm text-slate-500">Preparing your files for transfer</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 bg-white shadow-sm rounded-full flex items-center justify-center mx-auto mb-4">
+                    <FileUp className="w-8 h-8 text-brand-500" />
+                  </div>
+                  <h4 className="text-lg font-bold text-slate-800 mb-1">Select or drop files</h4>
+                  <p className="text-sm text-slate-500">Share with {peerCount > 0 ? `${peerCount} peers` : 'everyone in the room'}</p>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -190,7 +192,7 @@ export default function TransferSession({
       {/* Chat UI */}
       {connectionStatus === 'connected' && (
         <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-4 flex flex-col h-64">
-          <h4 className="text-sm font-semibold text-slate-800 mb-2">In-Room Chat</h4>
+          <h4 className="text-sm font-semibold text-slate-800 mb-2">Room Chat</h4>
           <div className="flex-1 overflow-y-auto mb-3 space-y-2 pr-2">
             {messages.length === 0 ? (
               <p className="text-xs text-slate-400 text-center mt-10">No messages yet. Say hello!</p>

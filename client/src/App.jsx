@@ -37,8 +37,10 @@ function App() {
   const [roomCode, setRoomCode] = useState('')
   const [joinCodeInput, setJoinCodeInput] = useState('')
   const [error, setError] = useState('')
-  const [isSender, setIsSender] = useState(false)
+  
+  // connectionStatus could be string or just count of connected peers. Let's keep it as string.
   const [connectionStatus, setConnectionStatus] = useState('disconnected') 
+  const [peers, setPeers] = useState([]) // list of connected peer socket IDs
 
   const [selectedFile, setSelectedFile] = useState(null)
   const [transferProgress, setTransferProgress] = useState(0)
@@ -50,14 +52,17 @@ function App() {
   const [messages, setMessages] = useState([])
   const [isPaused, setIsPaused] = useState(false)
 
-  const peerConnection = useRef(null)
-  const dataChannel = useRef(null)
-  const pendingCandidates = useRef([])
+  // WebRTC Mesh state
+  const peerConnections = useRef({}) // { peerId: RTCPeerConnection }
+  const dataChannels = useRef({}) // { peerId: RTCDataChannel }
+  const pendingCandidates = useRef({}) // { peerId: [RTCIceCandidate] }
   const roomCodeRef = useRef('')
   
-  const receivedChunks = useRef([])
-  const receivedSize = useRef(0)
-  const metaRef = useRef(null) 
+  // Transfer tracking per peer
+  const receivedChunks = useRef({}) // { peerId: [ArrayBuffer] }
+  const receivedSize = useRef({}) // { peerId: number }
+  const metaRef = useRef({}) // { peerId: metaObj }
+  
   const lastProgressUpdate = useRef(0)
   const speedUpdateInterval = useRef(Date.now())
   const bytesSinceLastSpeedUpdate = useRef(0)
@@ -70,7 +75,6 @@ function App() {
     const pathCode = window.location.pathname.replace('/', '').toUpperCase()
     if (pathCode.length === 6) {
       setJoinCodeInput(pathCode)
-      // Small timeout to ensure socket is connected before emitting
       setTimeout(() => {
         socket.emit('join-room', pathCode)
       }, 500)
@@ -79,7 +83,6 @@ function App() {
     socket.on('room-created', (code) => {
       setRoomCode(code)
       roomCodeRef.current = code
-      setIsSender(true)
       setAppState('waiting')
       window.history.pushState({}, '', `/${code}`)
     })
@@ -87,30 +90,39 @@ function App() {
     socket.on('room-joined', (code) => {
       setRoomCode(code)
       roomCodeRef.current = code
-      setIsSender(false)
       setAppState('in-room')
       setError('')
       window.history.pushState({}, '', `/${code}`)
     })
 
-    socket.on('peer-joined', async () => {
+    socket.on('peer-joined', async (peerId) => {
       setAppState('in-room')
       setError('')
-      await initiateConnection()
+      setPeers(prev => {
+        if (!prev.includes(peerId)) return [...prev, peerId];
+        return prev;
+      })
+      await initiateConnection(peerId)
     })
 
-    socket.on('offer', async (offer) => {
-      await handleReceiveOffer(offer)
+    socket.on('offer', async ({ offer, from }) => {
+      setPeers(prev => {
+        if (!prev.includes(from)) return [...prev, from];
+        return prev;
+      })
+      await handleReceiveOffer(offer, from)
     })
 
-    socket.on('answer', async (answer) => {
-      if (peerConnection.current) {
-        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer))
+    socket.on('answer', async ({ answer, from }) => {
+      const pc = peerConnections.current[from]
+      if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer))
         
         // Process any ICE candidates that arrived before the answer
-        while (pendingCandidates.current.length > 0) {
+        const queue = pendingCandidates.current[from] || []
+        while (queue.length > 0) {
           try {
-            await peerConnection.current.addIceCandidate(pendingCandidates.current.shift())
+            await pc.addIceCandidate(queue.shift())
           } catch (e) {
             console.error('Error adding pending ice candidate', e)
           }
@@ -118,17 +130,18 @@ function App() {
       }
     })
 
-    socket.on('ice-candidate', async (candidate) => {
+    socket.on('ice-candidate', async ({ candidate, from }) => {
       const rtcCandidate = new RTCIceCandidate(candidate)
-      if (peerConnection.current && peerConnection.current.remoteDescription) {
+      const pc = peerConnections.current[from]
+      if (pc && pc.remoteDescription) {
         try {
-          await peerConnection.current.addIceCandidate(rtcCandidate)
+          await pc.addIceCandidate(rtcCandidate)
         } catch (e) {
           console.error('Error adding received ice candidate', e)
         }
       } else {
-        // Queue candidates until remote description is set
-        pendingCandidates.current.push(rtcCandidate)
+        if (!pendingCandidates.current[from]) pendingCandidates.current[from] = []
+        pendingCandidates.current[from].push(rtcCandidate)
       }
     })
 
@@ -149,47 +162,63 @@ function App() {
     }
   }, [])
 
-  const setupPeerConnection = () => {
+  // Update overall connection status based on active channels
+  const checkConnectionStatus = () => {
+    const activeChannels = Object.values(dataChannels.current).filter(dc => dc.readyState === 'open')
+    if (activeChannels.length > 0) {
+      setConnectionStatus('connected')
+      setAppState('in-room')
+    } else {
+      setConnectionStatus('disconnected')
+    }
+  }
+
+  const setupPeerConnection = (peerId) => {
     const pc = new RTCPeerConnection(ICE_SERVERS)
     
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        socket.emit('ice-candidate', { candidate: event.candidate, roomCode: roomCodeRef.current })
+        socket.emit('ice-candidate', { candidate: event.candidate, to: peerId })
       }
     }
 
     pc.onconnectionstatechange = () => {
-      setConnectionStatus(pc.connectionState)
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        delete peerConnections.current[peerId]
+        delete dataChannels.current[peerId]
+        setPeers(prev => prev.filter(p => p !== peerId))
+        checkConnectionStatus()
+      }
     }
 
-    peerConnection.current = pc
+    peerConnections.current[peerId] = pc
     return pc
   }
 
-  const initiateConnection = async () => {
-    const pc = setupPeerConnection()
+  const initiateConnection = async (peerId) => {
+    const pc = setupPeerConnection(peerId)
     
     const dc = pc.createDataChannel('fileTransfer')
-    setupDataChannel(dc)
+    setupDataChannel(dc, peerId)
     
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
-    socket.emit('offer', { offer, roomCode: roomCodeRef.current })
+    socket.emit('offer', { offer, to: peerId })
   }
 
-  const handleReceiveOffer = async (offer) => {
-    const pc = setupPeerConnection()
+  const handleReceiveOffer = async (offer, peerId) => {
+    const pc = setupPeerConnection(peerId)
     
     pc.ondatachannel = (event) => {
-      setupDataChannel(event.channel)
+      setupDataChannel(event.channel, peerId)
     }
 
     await pc.setRemoteDescription(new RTCSessionDescription(offer))
     
-    // Process any ICE candidates that arrived before the offer was fully processed
-    while (pendingCandidates.current.length > 0) {
+    const queue = pendingCandidates.current[peerId] || []
+    while (queue.length > 0) {
       try {
-        await pc.addIceCandidate(pendingCandidates.current.shift())
+        await pc.addIceCandidate(queue.shift())
       } catch (e) {
         console.error('Error adding pending ice candidate', e)
       }
@@ -197,25 +226,37 @@ function App() {
 
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
-    socket.emit('answer', { answer, roomCode: roomCodeRef.current })
+    socket.emit('answer', { answer, to: peerId })
   }
 
-  const setupDataChannel = (dc) => {
+  const setupDataChannel = (dc, peerId) => {
     dc.binaryType = 'arraybuffer'; 
     dc.bufferedAmountLowThreshold = 256 * 1024;
 
-    dc.onopen = () => {
-      setConnectionStatus('connected')
+    const handleOpen = () => {
+      dataChannels.current[peerId] = dc
+      checkConnectionStatus()
+    }
+
+    if (dc.readyState === 'open') {
+      handleOpen()
+    } else {
+      dc.onopen = handleOpen
+    }
+
+    dc.onclose = () => {
+      delete dataChannels.current[peerId]
+      checkConnectionStatus()
     }
     
     dc.onmessage = (event) => {
       if (typeof event.data === 'string') {
         const meta = JSON.parse(event.data)
         if (meta.type === 'metadata') {
-          metaRef.current = meta
-          setReceivingMeta(meta)
-          receivedChunks.current = []
-          receivedSize.current = 0
+          metaRef.current[peerId] = meta
+          setReceivingMeta(meta) // Will reflect the most recent file sent to us
+          receivedChunks.current[peerId] = []
+          receivedSize.current[peerId] = 0
           setTransferProgress(0)
           setTransferSpeed(0)
           setTransferETA(0)
@@ -223,7 +264,7 @@ function App() {
           speedUpdateInterval.current = Date.now()
           bytesSinceLastSpeedUpdate.current = 0
         } else if (meta.type === 'chat') {
-          setMessages(prev => [...prev, { ...meta, sender: 'peer' }])
+          setMessages(prev => [...prev, { ...meta, sender: 'peer', peerId }])
         } else if (meta.type === 'control') {
           if (meta.action === 'pause') {
             setIsPaused(true)
@@ -234,42 +275,44 @@ function App() {
           }
         }
       } else {
-        receivedChunks.current.push(event.data)
-        receivedSize.current += event.data.byteLength
+        if (!receivedChunks.current[peerId]) receivedChunks.current[peerId] = []
+        if (!receivedSize.current[peerId]) receivedSize.current[peerId] = 0
+
+        receivedChunks.current[peerId].push(event.data)
+        receivedSize.current[peerId] += event.data.byteLength
         bytesSinceLastSpeedUpdate.current += event.data.byteLength
         
-        if (metaRef.current) {
-          const progress = (receivedSize.current / metaRef.current.size) * 100
+        const fileMeta = metaRef.current[peerId]
+        if (fileMeta) {
+          const progress = (receivedSize.current[peerId] / fileMeta.size) * 100
           
           const now = Date.now()
           if (now - speedUpdateInterval.current >= 1000) {
             const timeDiff = (now - speedUpdateInterval.current) / 1000
             const speedBytesPerSec = bytesSinceLastSpeedUpdate.current / timeDiff
             setTransferSpeed(speedBytesPerSec / (1024 * 1024))
-            const remainingBytes = metaRef.current.size - receivedSize.current
+            const remainingBytes = fileMeta.size - receivedSize.current[peerId]
             setTransferETA(speedBytesPerSec > 0 ? remainingBytes / speedBytesPerSec : 0)
             
             speedUpdateInterval.current = now
             bytesSinceLastSpeedUpdate.current = 0
           }
 
-          if (now - lastProgressUpdate.current > 50 || receivedSize.current === metaRef.current.size) {
+          if (now - lastProgressUpdate.current > 50 || receivedSize.current[peerId] === fileMeta.size) {
             setTransferProgress(progress)
             lastProgressUpdate.current = now
           }
           
-          if (receivedSize.current === metaRef.current.size) {
-            completeDownload(metaRef.current)
+          if (receivedSize.current[peerId] === fileMeta.size) {
+            completeDownload(fileMeta, peerId)
           }
         }
       }
     }
-    
-    dataChannel.current = dc
   }
 
-  const completeDownload = (meta) => {
-    const blob = new Blob(receivedChunks.current, { type: meta.mime })
+  const completeDownload = (meta, peerId) => {
+    const blob = new Blob(receivedChunks.current[peerId], { type: meta.mime })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -278,14 +321,14 @@ function App() {
     URL.revokeObjectURL(url)
     
     setTimeout(() => {
-      receivedChunks.current = []
+      receivedChunks.current[peerId] = []
     }, 1000)
   }
 
   const sendFile = async () => {
-    if (!selectedFile || !dataChannel.current) return;
+    const activeChannels = Object.values(dataChannels.current).filter(dc => dc.readyState === 'open');
+    if (!selectedFile || activeChannels.length === 0) return;
     
-    const dc = dataChannel.current;
     lastProgressUpdate.current = Date.now();
     speedUpdateInterval.current = Date.now();
     bytesSinceLastSpeedUpdate.current = 0;
@@ -296,7 +339,8 @@ function App() {
       size: selectedFile.size,
       mime: selectedFile.type || 'application/octet-stream'
     }
-    dc.send(JSON.stringify(meta))
+    const metaStr = JSON.stringify(meta)
+    activeChannels.forEach(dc => dc.send(metaStr))
     
     let offset = 0;
     
@@ -319,18 +363,20 @@ function App() {
       let blockOffset = 0;
 
       while (blockOffset < blockBuffer.byteLength) {
-        if (dc.bufferedAmount > 1024 * 1024) { 
-          await new Promise(resolve => {
-            dc.onbufferedamountlow = () => {
-              dc.onbufferedamountlow = null;
-              resolve();
-            }
-          });
+        // Find max buffered amount among all channels
+        const maxBuffered = Math.max(...activeChannels.map(dc => dc.bufferedAmount));
+        
+        if (maxBuffered > 1024 * 1024) { 
+          // Wait briefly if buffer is full on any channel
+          await new Promise(r => setTimeout(r, 50))
+          continue;
         }
 
         const end = Math.min(blockOffset + CHUNK_SIZE, blockBuffer.byteLength);
         const chunk = blockBuffer.slice(blockOffset, end);
-        dc.send(chunk);
+        activeChannels.forEach(dc => {
+          if (dc.readyState === 'open') dc.send(chunk)
+        });
         blockOffset += chunk.byteLength;
       }
       
@@ -386,10 +432,21 @@ function App() {
     setTransferProgress(0)
     setTransferSpeed(0)
     setTransferETA(0)
+    setReceivingMeta(null) // clear received meta to show sending UI
   }
 
   const handleFileChange = (e) => {
-    processFiles(e.target.files)
+    if (e && e.target && e.target.files) {
+      processFiles(e.target.files)
+    }
+  }
+
+  const resetFile = () => {
+    setSelectedFile(null)
+    setTransferProgress(0)
+    setTransferSpeed(0)
+    setTransferETA(0)
+    setReceivingMeta(null)
   }
 
   const getAllFileEntries = async (dataTransferItemList) => {
@@ -437,6 +494,7 @@ function App() {
           setTransferProgress(0)
           setTransferSpeed(0)
           setTransferETA(0)
+          setReceivingMeta(null)
           setIsZipping(false)
         })
       } else {
@@ -457,6 +515,7 @@ function App() {
         setTransferProgress(0)
         setTransferSpeed(0)
         setTransferETA(0)
+        setReceivingMeta(null)
         setIsZipping(false)
       }
     } else if (e.dataTransfer.files) {
@@ -465,9 +524,10 @@ function App() {
   }
 
   const sendMessage = (text) => {
-    if (dataChannel.current && dataChannel.current.readyState === 'open') {
+    const activeChannels = Object.values(dataChannels.current).filter(dc => dc.readyState === 'open');
+    if (activeChannels.length > 0) {
       const msg = { type: 'chat', text, sender: 'me', timestamp: Date.now() }
-      dataChannel.current.send(JSON.stringify(msg))
+      activeChannels.forEach(dc => dc.send(JSON.stringify(msg)))
       setMessages(prev => [...prev, msg])
     }
   }
@@ -476,9 +536,8 @@ function App() {
     const newState = !isPaused;
     setIsPaused(newState);
     isPausedRef.current = newState;
-    if (dataChannel.current && dataChannel.current.readyState === 'open') {
-      dataChannel.current.send(JSON.stringify({ type: 'control', action: newState ? 'pause' : 'resume' }))
-    }
+    const activeChannels = Object.values(dataChannels.current).filter(dc => dc.readyState === 'open');
+    activeChannels.forEach(dc => dc.send(JSON.stringify({ type: 'control', action: newState ? 'pause' : 'resume' })))
   }
 
   const handleGoHome = () => {
@@ -486,9 +545,10 @@ function App() {
     setRoomCode('')
     setJoinCodeInput('')
     window.history.pushState({}, '', `/`)
-    if (peerConnection.current) {
-      peerConnection.current.close()
-    }
+    Object.values(peerConnections.current).forEach(pc => pc.close())
+    peerConnections.current = {}
+    dataChannels.current = {}
+    setPeers([])
     setConnectionStatus('disconnected')
   }
 
@@ -582,7 +642,7 @@ function App() {
               {appState === 'in-room' && (
                 <TransferSession 
                   connectionStatus={connectionStatus}
-                  isSender={isSender}
+                  peerCount={peers.length}
                   selectedFile={selectedFile}
                   handleFileDrop={handleFileDrop}
                   handleFileChange={handleFileChange}
@@ -596,6 +656,7 @@ function App() {
                   sendMessage={sendMessage}
                   isPaused={isPaused}
                   togglePause={togglePause}
+                  resetFile={resetFile}
                 />
               )}
             </AnimatePresence>

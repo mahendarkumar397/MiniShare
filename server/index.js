@@ -35,7 +35,7 @@ io.on('connection', (socket) => {
   socket.on('join-room', (roomCode) => {
     const room = io.sockets.adapter.rooms.get(roomCode);
     if (room && room.size > 0) {
-      if (room.size >= 2 && !room.has(socket.id)) {
+      if (room.size >= 4 && !room.has(socket.id)) {
         socket.emit('room-error', 'Room is full');
         return;
       }
@@ -49,16 +49,16 @@ io.on('connection', (socket) => {
   });
 
   // WebRTC Signaling relays
-  socket.on('offer', ({ offer, roomCode }) => {
-    socket.to(roomCode).emit('offer', offer);
+  socket.on('offer', ({ offer, to }) => {
+    socket.to(to).emit('offer', { offer, from: socket.id });
   });
 
-  socket.on('answer', ({ answer, roomCode }) => {
-    socket.to(roomCode).emit('answer', answer);
+  socket.on('answer', ({ answer, to }) => {
+    socket.to(to).emit('answer', { answer, from: socket.id });
   });
 
-  socket.on('ice-candidate', ({ candidate, roomCode }) => {
-    socket.to(roomCode).emit('ice-candidate', candidate);
+  socket.on('ice-candidate', ({ candidate, to }) => {
+    socket.to(to).emit('ice-candidate', { candidate, from: socket.id });
   });
 
   socket.on('disconnect', () => {
