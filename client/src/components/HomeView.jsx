@@ -7,7 +7,8 @@ export default function HomeView({
   joinCodeInput, 
   setJoinCodeInput, 
   error,
-  setShowRules
+  setShowRules,
+  handleFileChange
 }) {
   return (
     <motion.div 
@@ -29,12 +30,30 @@ export default function HomeView({
       </div>
 
       <div className="space-y-6">
-        <button 
-          onClick={handleCreateRoom} 
-          className="w-full bg-brand-600 hover:bg-brand-700 text-white font-medium py-4 px-4 rounded-2xl transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center gap-2 text-lg"
-        >
-          <Send className="w-5 h-5" /> Select files to share
-        </button>
+        <div>
+          <p className="text-xs text-slate-500 font-medium mb-3 text-center px-4">
+            Note: The connection server may take 35-40 seconds to wake up on first use. Please be patient!
+          </p>
+          <button 
+            onClick={() => document.getElementById('home-file-upload').click()} 
+            className="w-full bg-brand-600 hover:bg-brand-700 text-white font-medium py-4 px-4 rounded-2xl transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center gap-2 text-lg"
+          >
+            <Send className="w-5 h-5" /> Select files to share
+          </button>
+        </div>
+        <input 
+          id="home-file-upload" 
+          type="file" 
+          multiple 
+          className="hidden" 
+          onClick={(e) => { e.target.value = ''; }}
+          onChange={(e) => {
+            if (e.target.files && e.target.files.length > 0) {
+              handleFileChange(e);
+              handleCreateRoom();
+            }
+          }} 
+        />
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">

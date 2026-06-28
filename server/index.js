@@ -11,7 +11,9 @@ const io = new Server(server, {
   cors: {
     origin: "*", // In production, restrict this to your frontend domain
     methods: ["GET", "POST"]
-  }
+  },
+  pingInterval: 10000,
+  pingTimeout: 5000
 });
 
 const PORT = process.env.PORT || 3001;
@@ -31,7 +33,6 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} created room: ${roomCode}`);
   });
 
-  // Join a room
   socket.on('join-room', (roomCode) => {
     const room = io.sockets.adapter.rooms.get(roomCode);
     if (room && room.size > 0) {

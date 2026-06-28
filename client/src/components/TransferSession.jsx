@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { FileUp, File as FileIcon, Download, CheckCircle, Loader2, Users } from 'lucide-react'
+import AnalyticsCard from './AnalyticsCard'
 
 export default function TransferSession({
   connectionStatus,
@@ -17,7 +18,10 @@ export default function TransferSession({
   sendMessage,
   isPaused,
   togglePause,
-  resetFile
+  resetFile,
+  acceptTransfer,
+  isTransferAccepted,
+  isWaitingForReceiver
 }) {
   return (
     <motion.div 
@@ -70,7 +74,7 @@ export default function TransferSession({
                   </button>
                 )}
               </div>
-              {transferProgress > 0 && (
+              {isTransferAccepted ? (
                 <div className="space-y-2 mt-6">
                   <div className="flex justify-between items-center text-sm font-semibold text-slate-700">
                     <div className="flex items-center gap-2">
@@ -92,11 +96,17 @@ export default function TransferSession({
                     />
                   </div>
                   {transferProgress < 100 && (
-                    <div className="flex justify-between text-xs text-slate-500 pt-1">
-                      <span>Speed: {transferSpeed ? transferSpeed.toFixed(2) : '0'} MB/s</span>
-                      <span>ETA: {transferETA ? Math.ceil(transferETA) : '0'}s</span>
-                    </div>
+                    <AnalyticsCard transferSpeed={transferSpeed} transferETA={transferETA} />
                   )}
+                </div>
+              ) : (
+                <div className="mt-6">
+                  <button 
+                    onClick={() => acceptTransfer(receivingMeta.peerId)}
+                    className="w-full bg-green-500 hover:bg-green-600 text-white font-medium py-3 rounded-xl transition-all shadow-md"
+                  >
+                    Accept Transfer
+                  </button>
                 </div>
               )}
             </div>
@@ -142,19 +152,16 @@ export default function TransferSession({
                     />
                   </div>
                   {transferProgress < 100 && (
-                    <div className="flex justify-between text-xs text-slate-500 pt-1">
-                      <span>Overall Speed: {transferSpeed ? transferSpeed.toFixed(2) : '0'} MB/s</span>
-                      <span>Max ETA: {transferETA ? Math.ceil(transferETA) : '0'}s</span>
-                    </div>
+                    <AnalyticsCard transferSpeed={transferSpeed} transferETA={transferETA} />
                   )}
                 </div>
               ) : (
                 <button 
                   onClick={sendFile}
-                  disabled={peerCount === 0}
-                  className={`w-full font-medium py-3 rounded-xl transition-all shadow-md ${peerCount > 0 ? 'bg-brand-600 hover:bg-brand-700 text-white hover:shadow-lg hover:-translate-y-0.5' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}
+                  disabled={peerCount === 0 || isWaitingForReceiver}
+                  className={`w-full font-medium py-3 rounded-xl transition-all shadow-md ${peerCount > 0 && !isWaitingForReceiver ? 'bg-brand-600 hover:bg-brand-700 text-white hover:shadow-lg hover:-translate-y-0.5' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}
                 >
-                  {peerCount > 0 ? `Start Transfer to ${peerCount} peers` : 'Waiting for peers...'}
+                  {isWaitingForReceiver ? 'Waiting for receiver to accept...' : (peerCount > 0 ? `Start Transfer to ${peerCount} peers` : 'Waiting for peers...')}
                 </button>
               )}
             </div>
@@ -165,7 +172,7 @@ export default function TransferSession({
               onDrop={handleFileDrop}
               onClick={() => document.getElementById('file-upload').click()}
             >
-              <input id="file-upload" type="file" multiple className="hidden" onChange={handleFileChange} />
+              <input id="file-upload" type="file" multiple className="hidden" onChange={handleFileChange} onClick={(e) => e.stopPropagation()} />
               
               {isZipping ? (
                 <>

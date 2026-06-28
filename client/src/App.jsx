@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { Send, Shield, Zap, Infinity as InfinityIcon, Info, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
-import JSZip from 'jszip'
+import { downloadZip } from 'client-zip'
 
 import HomeView from './components/HomeView'
 import WaitingRoom from './components/WaitingRoom'
@@ -13,19 +13,9 @@ const socket = io(SOCKET_URL, { autoConnect: false })
 
 const ICE_SERVERS = {
   iceServers: [
+    { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:openrelay.metered.ca:80' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
+    { urls: 'stun:stun1.l.google.com:19302' }
   ]
 }
 
@@ -49,9 +39,11 @@ function App() {
   const [transferETA, setTransferETA] = useState(0)
   const [isZipping, setIsZipping] = useState(false)
   const [receivingMeta, setReceivingMeta] = useState(null)
+  const [isTransferAccepted, setIsTransferAccepted] = useState(false)
   
   const [messages, setMessages] = useState([])
   const [isPaused, setIsPaused] = useState(false)
+  const [isWaitingForReceiver, setIsWaitingForReceiver] = useState(false)
 
   // WebRTC Mesh state
   const peerConnections = useRef({}) // { peerId: RTCPeerConnection }
@@ -60,12 +52,17 @@ function App() {
   const roomCodeRef = useRef('')
   
   // Transfer tracking per peer
-  const receivedChunks = useRef({}) // { peerId: [ArrayBuffer] }
   const receivedSize = useRef({}) // { peerId: number }
   const metaRef = useRef({}) // { peerId: metaObj }
+  const fileStreamRef = useRef({}) // { peerId: FileSystemWritableFileStream }
+  const peerReadyRef = useRef({}) // { peerId: boolean }
+  const unackedBytesRef = useRef({}) // { peerId: number }
+  const receiveBuffer = useRef({}) // { peerId: Array }
+  const receiveBufferSize = useRef({}) // { peerId: number }
+  const writeQueue = useRef({}) // { peerId: Promise }
   
   const lastProgressUpdate = useRef(0)
-  const speedUpdateInterval = useRef(Date.now())
+  const speedUpdateInterval = useRef(0)
   const bytesSinceLastSpeedUpdate = useRef(0)
   const isPausedRef = useRef(false)
 
@@ -73,14 +70,21 @@ function App() {
   useEffect(() => {
     socket.connect()
 
+    let timeoutId;
     const pathCode = window.location.pathname.replace('/', '').toUpperCase()
     if (pathCode.length === 6) {
-      setJoinCodeInput(pathCode)
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
+        setJoinCodeInput(pathCode)
         socket.emit('join-room', pathCode)
       }, 500)
     }
+    
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }, [])
 
+  useEffect(() => {
     socket.on('room-created', (code) => {
       setRoomCode(code)
       roomCodeRef.current = code
@@ -117,7 +121,15 @@ function App() {
     socket.on('answer', async ({ answer, from }) => {
       const pc = peerConnections.current[from]
       if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(answer))
+        if (pc.signalingState === 'stable') {
+          return; // Already processed an answer
+        }
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(answer))
+        } catch (e) {
+          console.error("Failed to set remote answer", e)
+          return;
+        }
         
         // Process any ICE candidates that arrived before the answer
         const queue = pendingCandidates.current[from] || []
@@ -174,7 +186,7 @@ function App() {
     }
   }
 
-  const setupPeerConnection = (peerId) => {
+  function setupPeerConnection(peerId) {
     const pc = new RTCPeerConnection(ICE_SERVERS)
     
     pc.onicecandidate = (event) => {
@@ -196,7 +208,7 @@ function App() {
     return pc
   }
 
-  const initiateConnection = async (peerId) => {
+  async function initiateConnection(peerId) {
     const pc = setupPeerConnection(peerId)
     
     const dc = pc.createDataChannel('fileTransfer')
@@ -207,7 +219,7 @@ function App() {
     socket.emit('offer', { offer, to: peerId })
   }
 
-  const handleReceiveOffer = async (offer, peerId) => {
+  async function handleReceiveOffer(offer, peerId) {
     const pc = setupPeerConnection(peerId)
     
     pc.ondatachannel = (event) => {
@@ -230,7 +242,7 @@ function App() {
     socket.emit('answer', { answer, to: peerId })
   }
 
-  const setupDataChannel = (dc, peerId) => {
+  function setupDataChannel(dc, peerId) {
     dc.binaryType = 'arraybuffer'; 
     dc.bufferedAmountLowThreshold = 256 * 1024;
 
@@ -255,8 +267,8 @@ function App() {
         const meta = JSON.parse(event.data)
         if (meta.type === 'metadata') {
           metaRef.current[peerId] = meta
-          setReceivingMeta(meta) // Will reflect the most recent file sent to us
-          receivedChunks.current[peerId] = []
+          setReceivingMeta({ ...meta, peerId }) // Will reflect the most recent file sent to us
+          setIsTransferAccepted(false)
           receivedSize.current[peerId] = 0
           setTransferProgress(0)
           setTransferSpeed(0)
@@ -273,15 +285,68 @@ function App() {
           } else if (meta.action === 'resume') {
             setIsPaused(false)
             isPausedRef.current = false
+          } else if (meta.action === 'ready') {
+            peerReadyRef.current[peerId] = true
+          } else if (meta.action === 'ack') {
+            if (!unackedBytesRef.current[peerId]) unackedBytesRef.current[peerId] = 0
+            unackedBytesRef.current[peerId] -= meta.size
+          } else if (meta.action === 'done') {
+            const stream = fileStreamRef.current[peerId];
+            if (stream) {
+              const flushBuffer = async () => {
+                if (receiveBuffer.current[peerId] && receiveBuffer.current[peerId].length > 0) {
+                  const blob = new Blob(receiveBuffer.current[peerId]);
+                  receiveBuffer.current[peerId] = [];
+                  receiveBufferSize.current[peerId] = 0;
+                  try {
+                    await stream.write(blob);
+                    if (dc.readyState === 'open') {
+                      dc.send(JSON.stringify({ type: 'control', action: 'ack', size: blob.size }));
+                    }
+                  } catch (e) {
+                    console.error("Final write failed", e);
+                  }
+                }
+                await stream.close().catch(e => console.error("Failed to close stream", e));
+              };
+              flushBuffer();
+              delete fileStreamRef.current[peerId];
+            }
+            setTransferProgress(100);
           }
         }
       } else {
-        if (!receivedChunks.current[peerId]) receivedChunks.current[peerId] = []
         if (!receivedSize.current[peerId]) receivedSize.current[peerId] = 0
 
-        receivedChunks.current[peerId].push(event.data)
         receivedSize.current[peerId] += event.data.byteLength
         bytesSinceLastSpeedUpdate.current += event.data.byteLength
+
+        const stream = fileStreamRef.current[peerId];
+        if (stream) {
+          if (!receiveBuffer.current[peerId]) {
+            receiveBuffer.current[peerId] = [];
+            receiveBufferSize.current[peerId] = 0;
+          }
+          receiveBuffer.current[peerId].push(event.data);
+          receiveBufferSize.current[peerId] += event.data.byteLength;
+
+          // 2MB flush threshold
+          if (receiveBufferSize.current[peerId] >= 2 * 1024 * 1024) {
+            const blob = new Blob(receiveBuffer.current[peerId]);
+            receiveBuffer.current[peerId] = [];
+            receiveBufferSize.current[peerId] = 0;
+            
+            writeQueue.current[peerId] = (writeQueue.current[peerId] || Promise.resolve())
+              .then(() => stream.write(blob))
+              .then(() => {
+                if (dc.readyState === 'open') {
+                   dc.send(JSON.stringify({ type: 'control', action: 'ack', size: blob.size }));
+                }
+              })
+              .catch(err => console.error("Write failed", err));
+          }
+        }
+
         
         const fileMeta = metaRef.current[peerId]
         if (fileMeta) {
@@ -299,36 +364,66 @@ function App() {
             bytesSinceLastSpeedUpdate.current = 0
           }
 
-          if (now - lastProgressUpdate.current > 50 || receivedSize.current[peerId] === fileMeta.size) {
-            setTransferProgress(progress)
+          if (now - lastProgressUpdate.current > 50 || receivedSize.current[peerId] >= fileMeta.size) {
+            let pct = progress;
+            if (fileMeta.isMultiple) pct = Math.min(99, pct);
+            setTransferProgress(pct)
             lastProgressUpdate.current = now
           }
           
-          if (receivedSize.current[peerId] === fileMeta.size) {
-            completeDownload(fileMeta, peerId)
+          if (!fileMeta.isMultiple && receivedSize.current[peerId] >= fileMeta.size) {
+            if (stream) {
+              stream.close().catch(e => console.error("Failed to close stream", e));
+              delete fileStreamRef.current[peerId];
+            }
+            setTransferProgress(100);
           }
         }
       }
     }
   }
 
-  const completeDownload = (meta, peerId) => {
-    const blob = new Blob(receivedChunks.current[peerId], { type: meta.mime })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = meta.name
-    a.click()
-    URL.revokeObjectURL(url)
-    
-    setTimeout(() => {
-      receivedChunks.current[peerId] = []
-    }, 1000)
+  const [isPrompting, setIsPrompting] = useState(false);
+
+  const acceptTransfer = async (peerId) => {
+    if (isPrompting) return;
+    setIsPrompting(true);
+    try {
+      const meta = metaRef.current[peerId];
+      if (!meta) {
+        setIsPrompting(false);
+        return;
+      }
+      
+      const handle = await window.showSaveFilePicker({
+        suggestedName: meta.name,
+      });
+      const writable = await handle.createWritable();
+      fileStreamRef.current[peerId] = writable;
+      
+      setIsTransferAccepted(true);
+      
+      const dc = dataChannels.current[peerId];
+      if (dc && dc.readyState === 'open') {
+        dc.send(JSON.stringify({ type: 'control', action: 'ready' }));
+      }
+    } catch (e) {
+      console.error("Transfer rejected or failed", e);
+      // If user cancels, don't destroy the transfer UI! Just let them click Accept again.
+    } finally {
+      setIsPrompting(false);
+    }
   }
 
   const sendFile = async () => {
+    if (isWaitingForReceiver) return;
+    setIsWaitingForReceiver(true);
+
     const activeChannels = Object.values(dataChannels.current).filter(dc => dc.readyState === 'open');
-    if (!selectedFile || activeChannels.length === 0) return;
+    if (!selectedFile || activeChannels.length === 0) {
+      setIsWaitingForReceiver(false);
+      return;
+    }
     
     lastProgressUpdate.current = Date.now();
     speedUpdateInterval.current = Date.now();
@@ -338,58 +433,108 @@ function App() {
       type: 'metadata',
       name: selectedFile.name,
       size: selectedFile.size,
-      mime: selectedFile.type || 'application/octet-stream'
+      mime: selectedFile.type || 'application/octet-stream',
+      isMultiple: !!selectedFile.isMultiple
     }
     const metaStr = JSON.stringify(meta)
-    activeChannels.forEach(dc => dc.send(metaStr))
+    
+    activeChannels.forEach(dc => {
+      const pId = Object.keys(dataChannels.current).find(id => dataChannels.current[id] === dc);
+      peerReadyRef.current[pId] = false;
+      unackedBytesRef.current[pId] = 0;
+      dc.send(metaStr);
+    });
+    
+    while (!Object.values(peerReadyRef.current).some(r => r) && !isPausedRef.current) {
+       await new Promise(r => setTimeout(r, 200))
+    }
+    
+    setIsWaitingForReceiver(false);
     
     let offset = 0;
     
-    const readBlock = (o) => {
-      return new Promise((resolve, reject) => {
-        const slice = selectedFile.slice(o, o + BLOCK_SIZE);
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(slice);
-      });
+    let stream;
+    if (selectedFile.isMultiple) {
+      stream = downloadZip(selectedFile.files).body;
+    } else {
+      stream = selectedFile.stream();
     }
+    
+    const reader = stream.getReader();
 
-    while (offset < selectedFile.size) {
+    while (true) {
       while (isPausedRef.current) {
         await new Promise(r => setTimeout(r, 200))
       }
       
-      const blockBuffer = await readBlock(offset);
+      const readyChannels = activeChannels.filter(dc => {
+        const pId = Object.keys(dataChannels.current).find(id => dataChannels.current[id] === dc);
+        return peerReadyRef.current[pId];
+      });
+
+      if (readyChannels.length === 0) {
+        await new Promise(r => setTimeout(r, 200));
+        continue;
+      }
+      
+      const { done, value } = await reader.read();
+      if (done) break;
+
       let blockOffset = 0;
 
-      while (blockOffset < blockBuffer.byteLength) {
-        // Find max buffered amount among all channels
-        const maxBuffered = Math.max(...activeChannels.map(dc => dc.bufferedAmount));
-        
-        if (maxBuffered > 1024 * 1024) { 
-          // Wait briefly if buffer is full on any channel
-          await new Promise(r => setTimeout(r, 50))
+      while (blockOffset < value.byteLength) {
+        const currentReadyChannels = activeChannels.filter(dc => {
+          const pId = Object.keys(dataChannels.current).find(id => dataChannels.current[id] === dc);
+          return peerReadyRef.current[pId];
+        });
+
+        if (currentReadyChannels.length === 0) {
+          await new Promise(r => setTimeout(r, 200));
           continue;
         }
 
-        const end = Math.min(blockOffset + CHUNK_SIZE, blockBuffer.byteLength);
-        const chunk = blockBuffer.slice(blockOffset, end);
-        activeChannels.forEach(dc => {
-          if (dc.readyState === 'open') dc.send(chunk)
+        const isCongested = currentReadyChannels.some(dc => {
+          const pId = Object.keys(dataChannels.current).find(id => dataChannels.current[id] === dc);
+          const unacked = unackedBytesRef.current[pId] || 0;
+          return unacked > 32 * 1024 * 1024; // 32MB backpressure limit
         });
+        
+        const maxBuffered = Math.max(...currentReadyChannels.map(dc => dc.bufferedAmount));
+        
+        if (isCongested || maxBuffered > 8 * 1024 * 1024) { 
+          await new Promise(r => setTimeout(r, 5))
+          continue;
+        }
+
+        const end = Math.min(blockOffset + CHUNK_SIZE, value.byteLength);
+        const chunk = value.slice(blockOffset, end);
+        
+        currentReadyChannels.forEach(dc => {
+          if (dc.readyState === 'open') {
+             const pId = Object.keys(dataChannels.current).find(id => dataChannels.current[id] === dc);
+             if (!unackedBytesRef.current[pId]) unackedBytesRef.current[pId] = 0;
+             try {
+               dc.send(chunk);
+               unackedBytesRef.current[pId] += chunk.byteLength;
+             } catch (e) {
+               console.error("dc.send crashed for peer", pId, e);
+               dc.close(); // Drop this peer so it doesn't break the transfer for others
+             }
+          }
+        });
+        
         blockOffset += chunk.byteLength;
       }
       
-      offset += blockBuffer.byteLength;
-      bytesSinceLastSpeedUpdate.current += blockBuffer.byteLength;
+      offset += value.byteLength;
+      bytesSinceLastSpeedUpdate.current += value.byteLength;
       
       const now = Date.now();
       if (now - speedUpdateInterval.current >= 1000) {
         const timeDiff = (now - speedUpdateInterval.current) / 1000;
         const speedBytesPerSec = bytesSinceLastSpeedUpdate.current / timeDiff;
         setTransferSpeed(speedBytesPerSec / (1024 * 1024));
-        const remainingBytes = selectedFile.size - offset;
+        const remainingBytes = Math.max(0, selectedFile.size - offset);
         setTransferETA(speedBytesPerSec > 0 ? remainingBytes / speedBytesPerSec : 0);
         
         speedUpdateInterval.current = now;
@@ -397,10 +542,17 @@ function App() {
       }
 
       if (now - lastProgressUpdate.current > 50) {
-        setTransferProgress((offset / selectedFile.size) * 100);
+        let pct = (offset / selectedFile.size) * 100;
+        if (selectedFile.isMultiple) pct = Math.min(99, pct);
+        setTransferProgress(pct);
         lastProgressUpdate.current = now;
       }
     }
+    
+    const doneMsg = JSON.stringify({ type: 'control', action: 'done' });
+    activeChannels.forEach(dc => {
+       if (dc.readyState === 'open') dc.send(doneMsg);
+    });
     
     setTransferProgress(100);
   }
@@ -420,15 +572,15 @@ function App() {
     if (fileList.length === 1) {
       setSelectedFile(fileList[0])
     } else {
-      setIsZipping(true)
-      const zip = new JSZip()
-      Array.from(fileList).forEach(f => {
-        zip.file(f.name, f)
+      const files = Array.from(fileList)
+      const totalSize = files.reduce((acc, f) => acc + f.size, 0)
+      setSelectedFile({
+        isMultiple: true,
+        files: files,
+        name: 'MiniShare_Files.zip',
+        size: totalSize,
+        type: 'application/zip'
       })
-      const blob = await zip.generateAsync({ type: 'blob' })
-      const zipFile = new File([blob], 'MiniShare_Transfer.zip', { type: 'application/zip' })
-      setSelectedFile(zipFile)
-      setIsZipping(false)
     }
     setTransferProgress(0)
     setTransferSpeed(0)
@@ -448,6 +600,7 @@ function App() {
     setTransferSpeed(0)
     setTransferETA(0)
     setReceivingMeta(null)
+    setIsWaitingForReceiver(false)
   }
 
   const getAllFileEntries = async (dataTransferItemList) => {
@@ -499,20 +652,24 @@ function App() {
           setIsZipping(false)
         })
       } else {
-        const zip = new JSZip()
         const filePromises = fileEntries.map(entry => {
           return new Promise(resolve => {
             entry.file(f => {
               const path = entry.fullPath.startsWith('/') ? entry.fullPath.slice(1) : entry.fullPath
-              zip.file(path, f)
-              resolve()
+              resolve({ name: path, input: f, size: f.size })
             })
           })
         })
-        await Promise.all(filePromises)
-        const blob = await zip.generateAsync({ type: 'blob' })
-        const zipFile = new File([blob], 'MiniShare_Folder.zip', { type: 'application/zip' })
-        setSelectedFile(zipFile)
+        const filesForZip = await Promise.all(filePromises)
+        const totalSize = filesForZip.reduce((acc, f) => acc + f.size, 0)
+        
+        setSelectedFile({
+          isMultiple: true,
+          files: filesForZip,
+          name: 'MiniShare_Folder.zip',
+          size: totalSize,
+          type: 'application/zip'
+        })
         setTransferProgress(0)
         setTransferSpeed(0)
         setTransferETA(0)
@@ -634,6 +791,7 @@ function App() {
                   setJoinCodeInput={setJoinCodeInput}
                   error={error}
                   setShowRules={setShowRules}
+                  handleFileChange={handleFileChange}
                 />
               )}
 
@@ -659,6 +817,9 @@ function App() {
                   isPaused={isPaused}
                   togglePause={togglePause}
                   resetFile={resetFile}
+                  isWaitingForReceiver={isWaitingForReceiver}
+                  acceptTransfer={acceptTransfer}
+                  isTransferAccepted={isTransferAccepted}
                 />
               )}
             </AnimatePresence>
